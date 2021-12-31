@@ -1,0 +1,328 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+#pragma pack(push, 1)
+
+typedef unsigned char BYTE;
+typedef unsigned short WORD;
+typedef unsigned long DWORD;
+typedef long LONG;
+
+typedef struct BITMAPFILEHEADERSTRUCT {
+    WORD type;
+    DWORD size;
+    WORD reserved1;
+    WORD reserved2;
+    DWORD offBits;
+} BITMAPFILEHEADER;
+
+typedef struct BITMAPINFOSTRUCT {
+    DWORD size;
+    LONG width;
+    LONG height;
+    WORD planes;
+    WORD bitCount;
+    DWORD compression;
+    DWORD sizeImage;
+    LONG xPelsPerMeter;
+    LONG yPelsPerMeter;
+    DWORD clrUsed;
+    DWORD clrImportant;
+} BITMAPINFOHEADER;
+
+typedef struct BMPSTRUCT {
+    BITMAPFILEHEADER *fileHeader;
+    BITMAPINFOHEADER *infoHeader;
+    BYTE *nonUsed;
+    BYTE *data;
+} BMP;
+#pragma pack(pop)
+
+BMP *readBMP(char *dir);
+
+BMP *copyBMP(BMP *file);
+
+void writeBMP(BMP *file, char *dir, int num);
+
+void freeBMP(BMP *file);
+
+typedef unsigned char  BYTE;
+typedef unsigned int   SIZE;
+
+typedef struct LIFEGAMESTRUCT {
+    BYTE *table;
+    SIZE width;
+    SIZE height;
+    SIZE gen;
+} LifeGame;
+
+LifeGame *createGame(BMP *file);
+LifeGame *nextGen(LifeGame *game, SIZE freq);
+BMP *getBMP(LifeGame *game, BMP *file);
+void freeGame(LifeGame *game);
+
+void check_arguments(int a, int b) {
+	if (a > b) {
+		printf("Program has no arguments!\n");
+		exit(1);
+	}
+}
+
+int main(int argc, char *argv[]) {
+	char *inputName;
+	char *outputName;
+    bool inputNameArg = false;
+    bool outputNameArg = false;
+	SIZE N = 10000000000;
+	int freq = 1;
+	check_arguments(2, argc);
+	for (int i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "--input")) {
+			check_arguments(i + 1, argc);
+			inputName = argv[i + 1];
+            inputNameArg = true;
+			continue;
+		}
+		if (!strcmp(argv[i], "--output")) {
+			check_arguments(i + 1, argc);
+			outputName = argv[i + 1];
+            outputNameArg = true;
+			continue;
+		}
+		if (!strcmp(argv[i], "--max_iter")) {
+			check_arguments(i + 1, argc);
+			N = atoi(argv[i + 1]);
+			continue;
+		}
+		if (!strcmp(argv[i], "--dump_freq")) {
+			check_arguments(i + 1, argc);
+			freq = atoi(argv[i + 1]);
+			continue;
+		}
+	}
+    if (!inputNameArg) {
+        printf("Program has no input file argument!\n");
+        exit(1);
+    }
+    if (!outputNameArg) {
+        printf("Program has no output file argument!\n");
+        exit(1);
+    }
+
+	BMP *file = readBMP(inputName);
+
+	LifeGame *game = createGame(file);
+    printf("Generation %d.\n", game->gen);
+    writeBMP(file, outputName, game->gen);
+    while(game->gen <= N) {
+        bool lifeIsDead = true;
+        for(int i = 0; i < game->width * game->height; i++) {
+            if(game->table[i] == '\000') {
+                lifeIsDead = false;
+                break;
+            }
+        }
+        if(lifeIsDead) {
+            printf("Life is dead.\n");
+            freeGame(game);
+            freeBMP(file);
+            exit(0);
+        }
+        for (int gen = 1; gen < game->gen; gen++) {
+            char number[10] = {0};
+            itoa(gen, number, 10);
+            char *curName = malloc(sizeof(char) * 100);
+            curName = strcpy(curName, outputName);
+            curName = strcat(curName, "\\dump");
+            curName = strcat(curName, number);
+            curName = strcat(curName,  ".bmp");
+            BMP *cur = readBMP(curName);
+            LifeGame *curGame = createGame(cur);
+            bool lifeIsLooped = true;
+            for(int i = 0; i < game->width * game->height; i++) {
+                if(game->table[i] != curGame->table[i]) {
+                    lifeIsLooped = false;
+                    break;
+                }
+            }
+            freeBMP(cur);
+            free(curName);
+            freeGame(curGame);
+            if (lifeIsLooped) {
+                if (gen == game->gen - 1) {
+                    printf("Life is static.\n");
+                } else {
+                    printf("Life went in cycles.\n");
+                }
+                freeGame(game);
+                freeBMP(file);
+                exit(0);
+            }
+        }
+        game = nextGen(game, freq);
+        BMP *temp = getBMP(game, file);
+        printf("Generation %d.\n", game->gen);
+        writeBMP(temp, outputName, game->gen);
+        freeBMP(temp);
+    }
+    printf("Life has reached the generation limit\n");
+    freeGame(game);
+	freeBMP(file);
+}
+
+LifeGame *createGame(BMP *file) {
+    LifeGame *game = malloc(sizeof(LifeGame));
+    game->height = file->infoHeader->height;
+    game->width = file->infoHeader->width;
+    game->table = malloc(game->height * game->height * sizeof(BYTE));
+    for (int i = 0, ni = 0; i < game->height; i++) {
+        for (int j = 0; j < game->width; j++, ni++) {
+            game->table[ni] = file->data[ni];
+        }
+    }
+    game->gen = 1;
+}
+
+int getNeighbours(LifeGame *game, SIZE i, SIZE j) {
+    int ans = 0;
+    int d[8][2] = {-1, -1,
+                   -1, 0,
+                   -1, 1,
+                   0, -1,
+                   0, 1,
+                   1, -1,
+                   1, 0,
+                   1, 1};
+    for(int ni = 0; ni < 8; ni++) {
+        int di = i + d[ni][0];
+        int dj = j + d[ni][1];
+        if(di >= 0 && di < game->height &&
+            dj >= 0 && dj < game->width &&
+            game->table[di * game->width + dj] == 0) {
+            ans++;
+        }
+    }
+    return ans;
+}
+
+LifeGame *nextGen(LifeGame *game, SIZE freq) {
+    for(int i = 0; i < freq; i++) {
+        LifeGame *newGame = malloc(sizeof(LifeGame));
+        newGame->height = game->height;
+        newGame->width = game->width;
+        newGame->table = malloc(newGame->height * newGame->width * sizeof(BYTE));
+        for (int i = 0, ni = 0; i < newGame->height; i++) {
+            for (int j = 0; j < newGame->width; j++, ni++) {
+                int neighbours = getNeighbours(game, i, j);
+                if(game->table[ni] == '\017' && neighbours == 3) {
+                    newGame->table[ni] = '\000';
+
+                } else if(game->table[ni] == '\000' && (neighbours < 2 || neighbours > 3)) {
+                    newGame->table[ni] = '\017';
+                } else {
+                    newGame->table[ni] = game->table[ni];
+                }
+            }
+        }
+        newGame->gen = game->gen + 1;
+        game = newGame;
+    }
+    return game;
+}
+
+BMP *getBMP(LifeGame *game, BMP *file) {
+    BMP *res = copyBMP(file);
+    int shift = file->infoHeader->width * sizeof(BYTE) % 4;
+    shift = (shift == 0 ? shift : 4 - shift);
+    for(int i = 0, ni = 0; i < game->height; i++) {
+        for(int j = 0; j < game->width; j++, ni++) {
+            res->data[ni + i * shift] = game->table[ni];
+        }
+    }
+    return res;
+}
+
+void freeGame(LifeGame *game) {
+    free(game->table);
+    free(game);
+}
+BMP *readBMP(char *dir) {
+    FILE *fin;
+    fin = fopen(dir, "rb");
+    if (fin == NULL) {
+        printf("File in directory %s doesn't exist.\n", dir);
+        exit(1);
+    }
+
+    BMP *file = malloc(sizeof(BMP));
+    file->fileHeader = malloc(sizeof(BITMAPFILEHEADER));
+    fread(file->fileHeader, sizeof(BITMAPFILEHEADER), 1, fin);
+    file->infoHeader = malloc(sizeof(BITMAPINFOHEADER));
+    fread(file->infoHeader, sizeof(BITMAPINFOHEADER), 1, fin);
+    file->nonUsed = malloc(file->fileHeader->offBits - sizeof(BITMAPFILEHEADER) - sizeof(BITMAPINFOHEADER));
+    fread(file->nonUsed, file->fileHeader->offBits - sizeof(BITMAPFILEHEADER) - sizeof(BITMAPINFOHEADER), 1, fin);
+    int shift = file->infoHeader->width * sizeof(BYTE) % 4;
+    shift = (shift == 0 ? shift : 4 - shift);
+    int size = file->infoHeader->height * file->infoHeader->width * sizeof(BYTE)
+               + file->infoHeader->height * shift * sizeof(BYTE);
+    file->data = malloc(size * sizeof(BYTE));
+    fread(file->data, size, 1, fin);
+    fclose(fin);
+
+    return file;
+}
+
+void writeBMP(BMP *file, char *dir, int num) {
+    mkdir(dir);
+    char *fileName = malloc(sizeof(char) * 100);
+    fileName = strcpy(fileName, dir);
+    char number[10] = {0};
+    itoa(num, number, 10);
+    fileName = strcat(fileName, "\\dump");
+    fileName = strcat(fileName, number);
+    fileName = strcat(fileName,  ".bmp");
+    FILE *fout;
+    fout = fopen(fileName, "wb+");
+    if (fout == NULL) {
+        printf("Directory %s doesn't exist.\n", fileName);
+        free(fileName);
+        exit(1);
+    }
+    fwrite(file->fileHeader, sizeof(BITMAPFILEHEADER), 1, fout);
+    fwrite(file->infoHeader, sizeof(BITMAPINFOHEADER), 1, fout);
+
+    fwrite(file->nonUsed, file->fileHeader->offBits - sizeof(BITMAPFILEHEADER) - sizeof(BITMAPINFOHEADER), 1, fout);
+    int shift = file->infoHeader->width * sizeof(BYTE) % 4;
+    shift = (shift == 0 ? shift : 4 - shift);
+    int size = file->infoHeader->height * file->infoHeader->width * sizeof(BYTE)
+               + file->infoHeader->height * shift * sizeof(BYTE);
+
+    fwrite(file->data, size, 1, fout);
+    free(fileName);
+    fclose(fout);
+}
+
+BMP *copyBMP(BMP *file) {
+    BMP *res = malloc(sizeof(BMP));
+    res->fileHeader = malloc(sizeof(BITMAPFILEHEADER));
+    memcpy(res->fileHeader, file->fileHeader, sizeof(BITMAPFILEHEADER));
+    res->infoHeader = malloc(sizeof(BITMAPINFOHEADER));
+    memcpy(res->infoHeader, file->infoHeader, sizeof(BITMAPINFOHEADER));
+    res->nonUsed = malloc(file->fileHeader->offBits - sizeof(BITMAPFILEHEADER) - sizeof(BITMAPINFOHEADER));
+    memcpy(res->nonUsed, file->nonUsed, file->fileHeader->offBits - sizeof(BITMAPFILEHEADER) - sizeof(BITMAPINFOHEADER));
+    int shift = file->infoHeader->width * sizeof(BYTE) % 4;
+    shift = (shift == 0 ? shift : 4 - shift);
+    int size = file->infoHeader->height * file->infoHeader->width * sizeof(BYTE)
+               + file->infoHeader->height * shift * sizeof(BYTE);
+    res->data = malloc(size);
+    return res;
+}
+
+void freeBMP(BMP *file) {
+    free(file->data);
+    free(file->fileHeader);
+    free(file->infoHeader);
+    free(file->nonUsed);
+    free(file);
+}
